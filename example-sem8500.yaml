@@ -1,0 +1,333 @@
+# Voltcraft SEM8500 (Conrad 2359015)
+# Six-outlet energy metering power strip, converted to ESPHome.
+#
+# ============================ HARDWARE ============================
+# Module:   Beken BK7231N (LibreTiny/bk72xx, generic-bk7231n-qfn32-tuya)
+# Metering: 3x Renergy RN8209D, device ID 0x820900 each, on a software SPI bus
+#
+#   SCLK = P14 (SPI0_SCK)   MOSI = P16 (SPI0_MOSI)   MISO = P17 (SPI0_MISO)
+#
+#   Chip       Channel A          Channel B
+#   ---------  -----------------  -----------------
+#   CS = P9    Outlet 3 (P6)      Outlet 4 (P26)
+#   CS = P15   Outlet 5 (P8)      Outlet 6 (P7)
+#   CS = P20   Outlet 1 (P10)     Outlet 2 (P28)
+#
+# Unused: P0, P1, P11, P21, P22, P23, P24. The per-outlet indicator LEDs are
+# wired to the relays and switch with them; there is no separate output.
+#
+# Note that P10 and P11 are UART1, the flashing and log port - the designer used
+# them for relays, which is how six relays plus a three-wire SPI bus and three
+# chip selects fit into 19 GPIOs at all.
+#
+# ========================== CALIBRATION ==========================
+# The factors below come from THIS unit's stock firmware. Coefficients vary
+# between units - extract your own with tools/extract_sem8500_calibration.py
+# from a flash dump taken before reflashing.
+#
+#   voltage [V] = raw / (10 * V)
+#   current [A] = raw / (1000 * I)
+#   power   [W] = raw * 32768 * voltage_factor * current_factor
+#
+# Verified against a reference meter with a 60 W incandescent lamp:
+#   reference 229 V / 60.0 W  <->  measured 227.5 V / 59.5 W, under 1 % off,
+#   matching the manufacturer's spec of <+-1 % above 10 W.
+#
+# No current offsets - see the README for why subtracting the noise floor makes
+# the readings worse rather than better.
+#
+# =========================== SAFETY ===========================
+# The stock overcurrent protection (16.8 A +-2 %) lived in the Tuya firmware and
+# is lost by reflashing. Rebuilt at the bottom of this file: above 16 A total,
+# all outlets switch off. Do not run this device without an equivalent
+# safeguard, and check the threshold against the circuit it is plugged into.
+
+esphome:
+  name: sem8500
+  friendly_name: SEM8500
+
+bk72xx:
+  board: generic-bk7231n-qfn32-tuya
+
+external_components:
+  - source: github://sl1288/esphome-rn8209d
+    components: [rn8209d]
+
+logger:
+  # P0/P1 would be the log UART but belong to the hardware. Logs go over Wi-Fi.
+  baud_rate: 0
+
+# Generate your own key with `esphome config` or the ESPHome dashboard.
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "SEM8500 Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+# Keep the web server: it is the rescue path for OTA should the API become
+# unreachable, and this device is not easy to open again.
+web_server:
+
+time:
+  - platform: sntp
+    id: sntp_time
+
+rn8209d:
+  id: meter_bus
+  clk_pin: P14
+  mosi_pin: P16
+  miso_pin: P17
+
+# ============================ OUTLETS =============================
+switch:
+  - platform: gpio
+    pin: P10
+    name: "Outlet 1"
+    id: outlet1
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: gpio
+    pin: P28
+    name: "Outlet 2"
+    id: outlet2
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: gpio
+    pin: P6
+    name: "Outlet 3"
+    id: outlet3
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: gpio
+    pin: P26
+    name: "Outlet 4"
+    id: outlet4
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: gpio
+    pin: P8
+    name: "Outlet 5"
+    id: outlet5
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: gpio
+    pin: P7
+    name: "Outlet 6"
+    id: outlet6
+    restore_mode: RESTORE_DEFAULT_OFF
+
+# ============================= METERING ===========================
+sensor:
+  # ---- chip on CS=P9: channel A = outlet 3, channel B = outlet 4 ----
+  - platform: rn8209d
+    cs_pin: P9
+    update_interval: 2s
+    voltage_factor: 0.0001002004 # 1 / (10 * 998)
+    current_a_factor: 0.0000075758 # 1 / (1000 * 132)
+    current_b_factor: 0.0000285714 # 1 / (1000 * 35)
+    power_a_factor: 0.0000248740 # 32768 * voltage_factor * current_a_factor
+    power_b_factor: 0.0000938105
+    voltage:
+      name: "Voltage"
+    frequency:
+      name: "Frequency"
+    # With the relay open no current flows and the raw values show only noise.
+    # The filter pins them to zero so neither the reading nor the energy counter
+    # drifts. Note this is a gate on the relay state, not a current offset.
+    current_a:
+      name: "Outlet 3 Current"
+      id: current3
+      filters:
+        - lambda: "return id(outlet3).state ? x : 0.0f;"
+    current_b:
+      name: "Outlet 4 Current"
+      id: current4
+      filters:
+        - lambda: "return id(outlet4).state ? x : 0.0f;"
+    power_a:
+      name: "Outlet 3 Power"
+      id: power3
+      filters:
+        - lambda: "return id(outlet3).state ? x : 0.0f;"
+    power_b:
+      name: "Outlet 4 Power"
+      id: power4
+      filters:
+        - lambda: "return id(outlet4).state ? x : 0.0f;"
+
+  # ---- chip on CS=P15: channel A = outlet 5, channel B = outlet 6 ----
+  - platform: rn8209d
+    cs_pin: P15
+    update_interval: 2s
+    voltage_factor: 0.0001001001 # 1 / (10 * 999)
+    current_a_factor: 0.0000075758
+    current_b_factor: 0.0000285714
+    power_a_factor: 0.0000248491
+    power_b_factor: 0.0000937166
+    current_a:
+      name: "Outlet 5 Current"
+      id: current5
+      filters:
+        - lambda: "return id(outlet5).state ? x : 0.0f;"
+    current_b:
+      name: "Outlet 6 Current"
+      id: current6
+      filters:
+        - lambda: "return id(outlet6).state ? x : 0.0f;"
+    power_a:
+      name: "Outlet 5 Power"
+      id: power5
+      filters:
+        - lambda: "return id(outlet5).state ? x : 0.0f;"
+    power_b:
+      name: "Outlet 6 Power"
+      id: power6
+      filters:
+        - lambda: "return id(outlet6).state ? x : 0.0f;"
+
+  # ---- chip on CS=P20: channel A = outlet 1, channel B = outlet 2 ----
+  - platform: rn8209d
+    cs_pin: P20
+    update_interval: 2s
+    voltage_factor: 0.0001002004
+    current_a_factor: 0.0000075188 # 1 / (1000 * 133)
+    current_b_factor: 0.0000285714
+    power_a_factor: 0.0000246870
+    power_b_factor: 0.0000938105
+    current_a:
+      name: "Outlet 1 Current"
+      id: current1
+      filters:
+        - lambda: "return id(outlet1).state ? x : 0.0f;"
+    current_b:
+      name: "Outlet 2 Current"
+      id: current2
+      filters:
+        - lambda: "return id(outlet2).state ? x : 0.0f;"
+    power_a:
+      name: "Outlet 1 Power"
+      id: power1
+      filters:
+        - lambda: "return id(outlet1).state ? x : 0.0f;"
+    power_b:
+      name: "Outlet 2 Power"
+      id: power2
+      filters:
+        - lambda: "return id(outlet2).state ? x : 0.0f;"
+
+  # ---- totals ----
+  - platform: template
+    name: "Total Power"
+    id: total_power
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: |-
+      float sum = 0.0f;
+      for (auto *s : {id(power1), id(power2), id(power3),
+                      id(power4), id(power5), id(power6)}) {
+        if (!std::isnan(s->state))
+          sum += s->state;
+      }
+      return sum;
+
+  - platform: template
+    name: "Total Current"
+    id: total_current
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: 2s
+    lambda: |-
+      float sum = 0.0f;
+      for (auto *s : {id(current1), id(current2), id(current3),
+                      id(current4), id(current5), id(current6)}) {
+        if (!std::isnan(s->state))
+          sum += s->state;
+      }
+      return sum;
+
+  # ---- energy per outlet ----
+  # The hardware energy counter is unusable here: each chip can accumulate only
+  # one of its two channels, so energy is integrated in software.
+  - platform: total_daily_energy
+    name: "Outlet 1 Energy"
+    power_id: power1
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+  - platform: total_daily_energy
+    name: "Outlet 2 Energy"
+    power_id: power2
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+  - platform: total_daily_energy
+    name: "Outlet 3 Energy"
+    power_id: power3
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+  - platform: total_daily_energy
+    name: "Outlet 4 Energy"
+    power_id: power4
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+  - platform: total_daily_energy
+    name: "Outlet 5 Energy"
+    power_id: power5
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+  - platform: total_daily_energy
+    name: "Outlet 6 Energy"
+    power_id: power6
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  - platform: wifi_signal
+    name: "Wi-Fi Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+# ======================= OVERCURRENT PROTECTION ===================
+# The strip is rated 16 A. The chip's RMS registers are already averaged, so
+# inrush currents do not trip this.
+interval:
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            lambda: "return !std::isnan(id(total_current).state) && id(total_current).state > 16.0f;"
+          then:
+            - logger.log:
+                level: ERROR
+                format: "Overcurrent: %.2f A - switching all outlets off!"
+                args: ["id(total_current).state"]
+            - switch.turn_off: outlet1
+            - switch.turn_off: outlet2
+            - switch.turn_off: outlet3
+            - switch.turn_off: outlet4
+            - switch.turn_off: outlet5
+            - switch.turn_off: outlet6
+
+button:
+  - platform: restart
+    name: "Restart"
