@@ -155,9 +155,17 @@ ota:
 #   captive_portal:
 #   web_server:
 
-time:
-  - platform: sntp
-    id: sntp_time
+# A time component is REQUIRED but not part of this package, so you can pick the
+# source. total_daily_energy depends on it for the midnight reset and the config
+# will not validate without one. Put one of these in your own file:
+#
+#   time:
+#     - platform: sntp            # no Home Assistant needed
+#
+#   time:
+#     - platform: homeassistant   # takes the time from HA instead
+#
+# No id is needed: total_daily_energy picks up the single clock automatically.
 
 # The energy counters call save() on every publish, but that only queues the
 # value in RAM. sync() writes to flash on this interval and skips values that

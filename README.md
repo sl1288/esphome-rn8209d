@@ -353,12 +353,21 @@ api:
 captive_portal:
 
 web_server:
+
+time:
+  - platform: sntp
 ```
 
-`captive_portal` and `web_server` are not in the package so you can leave either
-out. Keeping the web server is strongly recommended on this device: it is the
-rescue path for OTA should the API become unreachable, and a power strip is not
-easy to open again for serial flashing.
+A time component is **required**: the per-outlet `total_daily_energy` counters
+need a clock for their midnight reset, and the config will not validate without
+one. It is left out of the package so you can choose the source -- `sntp` needs
+no Home Assistant, `homeassistant` takes the time from there. No `id` is needed,
+the counters pick up the single clock automatically.
+
+`captive_portal` and `web_server` are optional. Keeping the web server is
+strongly recommended on this device: it is the rescue path for OTA should the
+API become unreachable, and a power strip is not easy to open again for serial
+flashing.
 
 [`packages/sem8500.yaml`](packages/sem8500.yaml) holds everything structural:
 the pin map, the three metering chips, the display sensors, the per-outlet

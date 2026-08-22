@@ -73,3 +73,9 @@ ota:
 captive_portal:
 
 web_server:
+
+# Required by the package: the total_daily_energy counters need a clock for
+# their midnight reset. sntp works without Home Assistant; swap in
+# platform: homeassistant if you would rather take the time from there.
+time:
+  - platform: sntp
