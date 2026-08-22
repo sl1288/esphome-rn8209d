@@ -158,7 +158,7 @@ sensor:
     cs_pin: P9
     update_interval: 1s
     power_a:
-      id: power_a_raw          # internal: no name given, so not exported
+      id: power_raw            # no name given, so this stays internal
       internal: true
 
   # Energy integrates the 1 Hz stream. trapezoid is the symmetric choice for
@@ -166,7 +166,7 @@ sensor:
   # because the accumulator is updated before the filter chain runs.
   - platform: total_daily_energy
     name: "Outlet Energy"
-    power_id: power_a_raw
+    power_id: power_raw
     method: trapezoid
     unit_of_measurement: kWh
     accuracy_decimals: 3
@@ -174,23 +174,65 @@ sensor:
       - multiply: 0.001
       - throttle: 15s
 
-  # What HA shows: the last value on a fixed 15 s raster. copy inherits unit,
-  # device_class, state_class and accuracy from the source.
-  - platform: copy
-    source_id: power_a_raw
+  # What HA sees. The raster lives in update_interval, NOT in a filter - see
+  # below for why that matters.
+  - platform: template
     name: "Outlet Power"
-    filters:
-      - heartbeat: 15s
+    id: power_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 15s
+    lambda: |-
+      const float v = id(power_raw).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+
+switch:
+  - platform: gpio
+    pin: P10
+    name: "Outlet"
+    id: outlet
+    on_turn_off:
+      # Fires after the GPIO write, so the relay is already open.
+      - sensor.template.publish:
+          id: power_display
+          state: 0.0
+    on_turn_on:
+      - delay: 1500ms          # wait for one fresh measurement at 1 Hz
+      - if:
+          condition:
+            switch.is_on: outlet
+          then:
+            - sensor.template.publish:
+                id: power_display
+                state: !lambda "return std::isnan(id(power_raw).state) ? 0.0f : id(power_raw).state;"
 ```
 
-`throttle_average: 15s` on the power sensor is the obvious shortcut, and it is
-energetically exact -- mean power times elapsed time is the integral. It has one
-flaw that only shows on hardware: the averaging window runs on a fixed scheduler
-raster from boot, unsynchronised with anything, so the first value published
-after a load changes mixes pre- and post-change samples. Switch an outlet on and
-its power reads too low for up to one window. Dropping the zeros from that
-average is not a fix either -- they are exactly what makes the energy correct.
-Hence the split above.
+Two traps are worth spelling out, because both are quiet.
+
+**Do not put the throttling in a filter if you also want to push values.**
+`sensor.template.publish` runs *through* the filter chain, so a throttling filter
+swallows the push and it surfaces only at the next tick. `heartbeat` is worse
+still: it never clears its stored value and re-emits it on every tick, so it will
+actively undo a push. `internal_send_state_to_frontend()` does bypass the chain
+and is public, but a heartbeat tick will overwrite it moments later. Keeping the
+raster in a filterless template sensor's `update_interval` avoids all of it.
+
+**Do not reach for `throttle_average` on a sensor that feeds an energy counter.**
+It is energetically exact -- mean power times elapsed time is the integral -- but
+its window runs on a fixed scheduler raster from boot, unsynchronised with
+anything, so the first value published after a load changes mixes pre- and
+post-change samples and reads too low. Dropping the zeros from that average is
+not a fix either: they are exactly what makes the energy correct.
+
+Without the switch automations above, a switched outlet keeps reporting its old
+value for up to one raster period. Measured on the reference device: the push
+lands in the same millisecond as the switch event on turn-off, and 1.5 s after
+turn-on, while the 15 s raster in between stays untouched -- two extra messages
+per switching cycle.
 
 One consequence worth knowing: anything that reads a sensor's `.state` in a
 lambda sees the filtered value. If you drive a protective action from it, read

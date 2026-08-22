@@ -12,10 +12,15 @@
 # at 15 s, which is lossless because the accumulator is updated before the
 # filter chain runs.
 #
-# Display path: one copy sensor per outlet with heartbeat: 15s. It emits the
-# last value on a fixed raster, so an outlet that has just been switched on
-# shows its real power right away. copy inherits unit, device_class,
-# state_class and accuracy from its source.
+# Display path: a template sensor per value with update_interval: 15s and no
+# filters. The switches additionally push at both edges - 0 on turn-off, and the
+# first fresh measurement about 1.5 s after turn-on - so a switched outlet
+# updates in Home Assistant at once instead of after up to 15 s.
+#
+# The raster deliberately lives in update_interval rather than in a filter,
+# because sensor.template.publish runs THROUGH the filter chain: a drosselling
+# filter would swallow the pushes, and heartbeat would additionally re-publish
+# its own stale value on the next tick and undo them.
 #
 # Why not throttle_average on the power sensors? Energetically that is exact
 # (mean power x elapsed time), and it was the earlier design here. But the
@@ -135,31 +140,157 @@ switch:
     name: "Outlet 1"
     id: outlet1
     restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      # The trigger fires after the GPIO write, so the relay is already open.
+      - sensor.template.publish:
+          id: power1_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current1_display
+          state: 0.0
+    on_turn_on:
+      # Nothing useful to send yet - wait for a fresh measurement at 1 Hz.
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet1
+          then:
+            - sensor.template.publish:
+                id: power1_display
+                state: !lambda "return std::isnan(id(power1).state) ? 0.0f : id(power1).state;"
+            - sensor.template.publish:
+                id: current1_display
+                state: !lambda "return std::isnan(id(current1).state) ? 0.0f : id(current1).state;"
   - platform: gpio
     pin: P28
     name: "Outlet 2"
     id: outlet2
     restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      # The trigger fires after the GPIO write, so the relay is already open.
+      - sensor.template.publish:
+          id: power2_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current2_display
+          state: 0.0
+    on_turn_on:
+      # Nothing useful to send yet - wait for a fresh measurement at 1 Hz.
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet2
+          then:
+            - sensor.template.publish:
+                id: power2_display
+                state: !lambda "return std::isnan(id(power2).state) ? 0.0f : id(power2).state;"
+            - sensor.template.publish:
+                id: current2_display
+                state: !lambda "return std::isnan(id(current2).state) ? 0.0f : id(current2).state;"
   - platform: gpio
     pin: P6
     name: "Outlet 3"
     id: outlet3
     restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      # The trigger fires after the GPIO write, so the relay is already open.
+      - sensor.template.publish:
+          id: power3_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current3_display
+          state: 0.0
+    on_turn_on:
+      # Nothing useful to send yet - wait for a fresh measurement at 1 Hz.
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet3
+          then:
+            - sensor.template.publish:
+                id: power3_display
+                state: !lambda "return std::isnan(id(power3).state) ? 0.0f : id(power3).state;"
+            - sensor.template.publish:
+                id: current3_display
+                state: !lambda "return std::isnan(id(current3).state) ? 0.0f : id(current3).state;"
   - platform: gpio
     pin: P26
     name: "Outlet 4"
     id: outlet4
     restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      # The trigger fires after the GPIO write, so the relay is already open.
+      - sensor.template.publish:
+          id: power4_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current4_display
+          state: 0.0
+    on_turn_on:
+      # Nothing useful to send yet - wait for a fresh measurement at 1 Hz.
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet4
+          then:
+            - sensor.template.publish:
+                id: power4_display
+                state: !lambda "return std::isnan(id(power4).state) ? 0.0f : id(power4).state;"
+            - sensor.template.publish:
+                id: current4_display
+                state: !lambda "return std::isnan(id(current4).state) ? 0.0f : id(current4).state;"
   - platform: gpio
     pin: P8
     name: "Outlet 5"
     id: outlet5
     restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      # The trigger fires after the GPIO write, so the relay is already open.
+      - sensor.template.publish:
+          id: power5_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current5_display
+          state: 0.0
+    on_turn_on:
+      # Nothing useful to send yet - wait for a fresh measurement at 1 Hz.
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet5
+          then:
+            - sensor.template.publish:
+                id: power5_display
+                state: !lambda "return std::isnan(id(power5).state) ? 0.0f : id(power5).state;"
+            - sensor.template.publish:
+                id: current5_display
+                state: !lambda "return std::isnan(id(current5).state) ? 0.0f : id(current5).state;"
   - platform: gpio
     pin: P7
     name: "Outlet 6"
     id: outlet6
     restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      # The trigger fires after the GPIO write, so the relay is already open.
+      - sensor.template.publish:
+          id: power6_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current6_display
+          state: 0.0
+    on_turn_on:
+      # Nothing useful to send yet - wait for a fresh measurement at 1 Hz.
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet6
+          then:
+            - sensor.template.publish:
+                id: power6_display
+                state: !lambda "return std::isnan(id(power6).state) ? 0.0f : id(power6).state;"
+            - sensor.template.publish:
+                id: current6_display
+                state: !lambda "return std::isnan(id(current6).state) ? 0.0f : id(current6).state;"
 
 # ============================= METERING ===========================
 sensor:
@@ -181,20 +312,20 @@ sensor:
       filters:
         - throttle_average: 15s
     # With the relay open no current flows and the raw values show only noise.
-    # The filter pins them to zero so neither the reading nor the energy counter
+    # The lambda pins them to zero so neither the reading nor the energy counter
     # drifts. Note this is a gate on the relay state, not a current offset.
+    # These sensors are internal; the display sensors further down are what
+    # Home Assistant sees.
     current_a:
-      name: "Outlet 3 Current"
       id: current3
+      internal: true
       filters:
         - lambda: "return id(outlet3).state ? x : 0.0f;"
-        - heartbeat: 15s
     current_b:
-      name: "Outlet 4 Current"
       id: current4
+      internal: true
       filters:
         - lambda: "return id(outlet4).state ? x : 0.0f;"
-        - heartbeat: 15s
     power_a:
       id: power3
       internal: true
@@ -216,17 +347,15 @@ sensor:
     power_a_factor: 0.0000248491
     power_b_factor: 0.0000937166
     current_a:
-      name: "Outlet 5 Current"
       id: current5
+      internal: true
       filters:
         - lambda: "return id(outlet5).state ? x : 0.0f;"
-        - heartbeat: 15s
     current_b:
-      name: "Outlet 6 Current"
       id: current6
+      internal: true
       filters:
         - lambda: "return id(outlet6).state ? x : 0.0f;"
-        - heartbeat: 15s
     power_a:
       id: power5
       internal: true
@@ -248,17 +377,15 @@ sensor:
     power_a_factor: 0.0000246870
     power_b_factor: 0.0000938105
     current_a:
-      name: "Outlet 1 Current"
       id: current1
+      internal: true
       filters:
         - lambda: "return id(outlet1).state ? x : 0.0f;"
-        - heartbeat: 15s
     current_b:
-      name: "Outlet 2 Current"
       id: current2
+      internal: true
       filters:
         - lambda: "return id(outlet2).state ? x : 0.0f;"
-        - heartbeat: 15s
     power_a:
       id: power1
       internal: true
@@ -270,39 +397,172 @@ sensor:
       filters:
         - lambda: "return id(outlet2).state ? x : 0.0f;"
 
-  # ---- display copies ----
-  # What Home Assistant sees for power. The sources above are internal and
-  # feed the energy counters at 1 Hz; these report the last value every 15 s.
-  - platform: copy
-    source_id: power1
+  # ---- display sensors ----
+  # The measuring sensors above are internal and publish every second: the
+  # energy counters need that resolution. These template sensors are what
+  # Home Assistant sees, on a 15 s raster.
+  #
+  # They deliberately carry NO filters. A drosselling filter would swallow
+  # the immediate pushes the switches below perform at their edges, and
+  # heartbeat in particular would then re-publish its own stale value on the
+  # next tick and undo the push. Keeping the raster in update_interval
+  # instead leaves sensor.template.publish free to take effect at once.
+  - platform: template
     name: "Outlet 1 Power"
-    filters:
-      - heartbeat: 15s
-  - platform: copy
-    source_id: power2
+    id: power1_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 15s
+    lambda: |-
+      const float v = id(power1).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: "Outlet 1 Current"
+    id: current1_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: 15s
+    lambda: |-
+      const float v = id(current1).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
     name: "Outlet 2 Power"
-    filters:
-      - heartbeat: 15s
-  - platform: copy
-    source_id: power3
+    id: power2_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 15s
+    lambda: |-
+      const float v = id(power2).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: "Outlet 2 Current"
+    id: current2_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: 15s
+    lambda: |-
+      const float v = id(current2).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
     name: "Outlet 3 Power"
-    filters:
-      - heartbeat: 15s
-  - platform: copy
-    source_id: power4
+    id: power3_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 15s
+    lambda: |-
+      const float v = id(power3).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: "Outlet 3 Current"
+    id: current3_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: 15s
+    lambda: |-
+      const float v = id(current3).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
     name: "Outlet 4 Power"
-    filters:
-      - heartbeat: 15s
-  - platform: copy
-    source_id: power5
+    id: power4_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 15s
+    lambda: |-
+      const float v = id(power4).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: "Outlet 4 Current"
+    id: current4_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: 15s
+    lambda: |-
+      const float v = id(current4).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
     name: "Outlet 5 Power"
-    filters:
-      - heartbeat: 15s
-  - platform: copy
-    source_id: power6
+    id: power5_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 15s
+    lambda: |-
+      const float v = id(power5).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: "Outlet 5 Current"
+    id: current5_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: 15s
+    lambda: |-
+      const float v = id(current5).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
     name: "Outlet 6 Power"
-    filters:
-      - heartbeat: 15s
+    id: power6_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 15s
+    lambda: |-
+      const float v = id(power6).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: "Outlet 6 Current"
+    id: current6_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: 15s
+    lambda: |-
+      const float v = id(current6).state;
+      if (std::isnan(v))
+        return {};
+      return v;
 
   # ---- totals ----
   - platform: template
