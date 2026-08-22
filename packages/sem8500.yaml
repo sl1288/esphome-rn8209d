@@ -1,0 +1,731 @@
+# Voltcraft SEM8500 (Conrad 2359015) - reusable package
+#
+# Everything that is the same for every SEM8500 lives here. Per-unit values -
+# calibration, network, entity names - come from the substitutions of the file
+# that includes this package. Every substitution below is a default that the
+# including file overrides simply by defining the same key.
+#
+# Usage:
+#
+#   substitutions:
+#     device_name: sem8500
+#     cs9_voltage_factor: "0.0001002004"      # from your own flash dump
+#     ...
+#
+#   packages:
+#     remote_package:
+#       url: https://github.com/sl1288/esphome-rn8209d
+#       ref: main
+#       files: [packages/sem8500.yaml]
+#       refresh: 1d
+#
+#   wifi:
+#     ssid: !secret wifi_ssid
+#     password: !secret wifi_password
+#
+#   api:
+#     encryption:
+#       key: !secret api_encryption_key
+#
+# Network and API credentials stay in the including file on purpose: they are
+# per-unit, and !secret resolves against your own secrets.yaml there.
+#
+# ============================ HARDWARE ============================
+# Module:   Beken BK7231N (LibreTiny/bk72xx, generic-bk7231n-qfn32-tuya)
+# Metering: 3x Renergy RN8209D, device ID 0x820900 each, on a software SPI bus
+#
+#   SCLK = P14 (SPI0_SCK)   MOSI = P16 (SPI0_MOSI)   MISO = P17 (SPI0_MISO)
+#
+#   Chip       Channel A          Channel B
+#   ---------  -----------------  -----------------
+#   CS = P9    Outlet 3 (P6)      Outlet 4 (P26)
+#   CS = P15   Outlet 5 (P8)      Outlet 6 (P7)
+#   CS = P20   Outlet 1 (P10)     Outlet 2 (P28)
+#
+# Unused: P0, P1, P11, P21, P22, P23, P24. The per-outlet indicator LEDs are
+# wired to the relays and switch with them; there is no separate output.
+#
+# P10 and P11 are UART1, the flashing and log port - the designer used them for
+# relays, which is how six relays plus a three-wire SPI bus and three chip
+# selects fit into 19 GPIOs at all.
+#
+# ======================= SAMPLING AND ENERGY ======================
+# Measuring path: the power and current sensors are internal and publish every
+# second. The total_daily_energy counters integrate that stream with method
+# "trapezoid", the symmetric choice for instantaneous samples. A throttle on the
+# counters keeps Home Assistant at 15 s, which is lossless because the
+# accumulator is updated before the filter chain runs.
+#
+# Display path: filterless template sensors with update_interval: 15s, plus a
+# push at both switching edges (0 on turn-off, the first fresh measurement about
+# 1.5 s after turn-on). The raster deliberately lives in update_interval and not
+# in a filter: sensor.template.publish runs THROUGH the filter chain, so a
+# throttling filter would swallow the pushes, and heartbeat would additionally
+# re-publish its own stale value on the next tick and undo them.
+#
+# Do not put throttle_average on a sensor that feeds an energy counter. It is
+# energetically exact, but its window runs on a fixed scheduler raster from boot
+# and is unsynchronised with switching, so the first value after a change mixes
+# pre- and post-change samples and reads too low. Removing the zeros from that
+# average is not a fix either - they are what makes the energy correct.
+#
+# =========================== SAFETY ===========================
+# The stock overcurrent protection (16.8 A +-2 %) lived in the Tuya firmware and
+# is lost by reflashing. Rebuilt at the bottom of this file. Check the threshold
+# against the circuit the strip is plugged into.
+
+substitutions:
+  device_name: sem8500
+  friendly_name: SEM8500
+
+  # Pin the component to a tag or commit for reproducible builds.
+  component_ref: main
+
+  # Total current above which all outlets are switched off. The strip is
+  # rated 16 A.
+  max_current: "16.0"
+
+  # How often the chips are read, and how often Home Assistant is updated.
+  poll_interval: 1s
+  report_interval: 15s
+
+  # ---- calibration ----
+  # These are the values of ONE reference unit. Coefficients vary between
+  # units - read your own with tools/extract_sem8500_calibration.py from a
+  # flash dump taken before reflashing, and override them.
+  #
+  #   voltage [V] = raw / (10 * V)
+  #   current [A] = raw / (1000 * I)
+  #   power   [W] = raw * 32768 * voltage_factor * current_factor
+  cs9_voltage_factor: "0.0001002004"
+  cs9_current_a_factor: "0.0000075758"
+  cs9_current_b_factor: "0.0000285714"
+  cs9_power_a_factor: "0.0000248740"
+  cs9_power_b_factor: "0.0000938105"
+
+  cs15_voltage_factor: "0.0001001001"
+  cs15_current_a_factor: "0.0000075758"
+  cs15_current_b_factor: "0.0000285714"
+  cs15_power_a_factor: "0.0000248491"
+  cs15_power_b_factor: "0.0000937166"
+
+  cs20_voltage_factor: "0.0001002004"
+  cs20_current_a_factor: "0.0000075188"
+  cs20_current_b_factor: "0.0000285714"
+  cs20_power_a_factor: "0.0000246870"
+  cs20_power_b_factor: "0.0000938105"
+
+  # ---- entity names ----
+  # Override these to keep existing entity_ids when migrating an already
+  # running device, or simply to use your own language.
+  outlet_label: Outlet
+  power_label: Power
+  current_label: Current
+  energy_label: Energy
+  voltage_name: Voltage
+  frequency_name: Frequency
+  total_power_name: Total Power
+  total_current_name: Total Current
+  wifi_signal_name: Wi-Fi Signal
+  restart_name: Restart
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+bk72xx:
+  board: generic-bk7231n-qfn32-tuya
+
+external_components:
+  - source: github://sl1288/esphome-rn8209d@${component_ref}
+    components: [rn8209d]
+
+logger:
+  # P0/P1 would be the log UART but belong to the hardware. Logs go over Wi-Fi.
+  baud_rate: 0
+
+ota:
+  - platform: esphome
+
+captive_portal:
+
+# Keep the web server: it is the rescue path for OTA should the API become
+# unreachable, and this device is not easy to open again.
+web_server:
+
+time:
+  - platform: sntp
+    id: sntp_time
+
+# The energy counters call save() on every publish, but that only queues the
+# value in RAM. sync() writes to flash on this interval and skips values that
+# have not changed - with all outlets off the relay gate holds power at 0, so
+# nothing changes and nothing is written at all.
+preferences:
+  flash_write_interval: 300s
+
+rn8209d:
+  id: meter_bus
+  clk_pin: P14
+  mosi_pin: P16
+  miso_pin: P17
+
+# ============================ OUTLETS =============================
+# Each switch pushes a display value at both edges. The trigger fires after the
+# GPIO write, so on turn-off the relay is already open.
+#
+# The switch.is_on guard after the delay is required: ESPHome starts a second
+# automation instance rather than cancelling a pending one, so without it a
+# turn-off inside the delay window would later be overwritten by a stale value.
+switch:
+  - platform: gpio
+    pin: P10
+    name: ${outlet_label} 1
+    id: outlet1
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      - sensor.template.publish:
+          id: power1_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current1_display
+          state: 0.0
+    on_turn_on:
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet1
+          then:
+            - sensor.template.publish:
+                id: power1_display
+                state: !lambda "return std::isnan(id(power1).state) ? 0.0f : id(power1).state;"
+            - sensor.template.publish:
+                id: current1_display
+                state: !lambda "return std::isnan(id(current1).state) ? 0.0f : id(current1).state;"
+
+  - platform: gpio
+    pin: P28
+    name: ${outlet_label} 2
+    id: outlet2
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      - sensor.template.publish:
+          id: power2_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current2_display
+          state: 0.0
+    on_turn_on:
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet2
+          then:
+            - sensor.template.publish:
+                id: power2_display
+                state: !lambda "return std::isnan(id(power2).state) ? 0.0f : id(power2).state;"
+            - sensor.template.publish:
+                id: current2_display
+                state: !lambda "return std::isnan(id(current2).state) ? 0.0f : id(current2).state;"
+
+  - platform: gpio
+    pin: P6
+    name: ${outlet_label} 3
+    id: outlet3
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      - sensor.template.publish:
+          id: power3_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current3_display
+          state: 0.0
+    on_turn_on:
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet3
+          then:
+            - sensor.template.publish:
+                id: power3_display
+                state: !lambda "return std::isnan(id(power3).state) ? 0.0f : id(power3).state;"
+            - sensor.template.publish:
+                id: current3_display
+                state: !lambda "return std::isnan(id(current3).state) ? 0.0f : id(current3).state;"
+
+  - platform: gpio
+    pin: P26
+    name: ${outlet_label} 4
+    id: outlet4
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      - sensor.template.publish:
+          id: power4_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current4_display
+          state: 0.0
+    on_turn_on:
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet4
+          then:
+            - sensor.template.publish:
+                id: power4_display
+                state: !lambda "return std::isnan(id(power4).state) ? 0.0f : id(power4).state;"
+            - sensor.template.publish:
+                id: current4_display
+                state: !lambda "return std::isnan(id(current4).state) ? 0.0f : id(current4).state;"
+
+  - platform: gpio
+    pin: P8
+    name: ${outlet_label} 5
+    id: outlet5
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      - sensor.template.publish:
+          id: power5_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current5_display
+          state: 0.0
+    on_turn_on:
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet5
+          then:
+            - sensor.template.publish:
+                id: power5_display
+                state: !lambda "return std::isnan(id(power5).state) ? 0.0f : id(power5).state;"
+            - sensor.template.publish:
+                id: current5_display
+                state: !lambda "return std::isnan(id(current5).state) ? 0.0f : id(current5).state;"
+
+  - platform: gpio
+    pin: P7
+    name: ${outlet_label} 6
+    id: outlet6
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      - sensor.template.publish:
+          id: power6_display
+          state: 0.0
+      - sensor.template.publish:
+          id: current6_display
+          state: 0.0
+    on_turn_on:
+      - delay: 1500ms
+      - if:
+          condition:
+            switch.is_on: outlet6
+          then:
+            - sensor.template.publish:
+                id: power6_display
+                state: !lambda "return std::isnan(id(power6).state) ? 0.0f : id(power6).state;"
+            - sensor.template.publish:
+                id: current6_display
+                state: !lambda "return std::isnan(id(current6).state) ? 0.0f : id(current6).state;"
+
+# ============================= METERING ===========================
+sensor:
+  # ---- chip on CS=P9: channel A = outlet 3, channel B = outlet 4 ----
+  # With the relay open no current flows and the raw values show only noise.
+  # The lambda pins them to zero so neither the reading nor the energy counter
+  # drifts. It is a gate on the relay state, not a current offset - see the
+  # README for why subtracting the noise floor makes things worse.
+  - platform: rn8209d
+    cs_pin: P9
+    update_interval: ${poll_interval}
+    voltage_factor: ${cs9_voltage_factor}
+    current_a_factor: ${cs9_current_a_factor}
+    current_b_factor: ${cs9_current_b_factor}
+    power_a_factor: ${cs9_power_a_factor}
+    power_b_factor: ${cs9_power_b_factor}
+    voltage:
+      name: ${voltage_name}
+      id: mains_voltage
+      filters:
+        - throttle_average: ${report_interval}
+    frequency:
+      name: ${frequency_name}
+      filters:
+        - throttle_average: ${report_interval}
+    current_a:
+      id: current3
+      internal: true
+      filters:
+        - lambda: "return id(outlet3).state ? x : 0.0f;"
+    current_b:
+      id: current4
+      internal: true
+      filters:
+        - lambda: "return id(outlet4).state ? x : 0.0f;"
+    power_a:
+      id: power3
+      internal: true
+      filters:
+        - lambda: "return id(outlet3).state ? x : 0.0f;"
+    power_b:
+      id: power4
+      internal: true
+      filters:
+        - lambda: "return id(outlet4).state ? x : 0.0f;"
+
+  # ---- chip on CS=P15: channel A = outlet 5, channel B = outlet 6 ----
+  - platform: rn8209d
+    cs_pin: P15
+    update_interval: ${poll_interval}
+    voltage_factor: ${cs15_voltage_factor}
+    current_a_factor: ${cs15_current_a_factor}
+    current_b_factor: ${cs15_current_b_factor}
+    power_a_factor: ${cs15_power_a_factor}
+    power_b_factor: ${cs15_power_b_factor}
+    current_a:
+      id: current5
+      internal: true
+      filters:
+        - lambda: "return id(outlet5).state ? x : 0.0f;"
+    current_b:
+      id: current6
+      internal: true
+      filters:
+        - lambda: "return id(outlet6).state ? x : 0.0f;"
+    power_a:
+      id: power5
+      internal: true
+      filters:
+        - lambda: "return id(outlet5).state ? x : 0.0f;"
+    power_b:
+      id: power6
+      internal: true
+      filters:
+        - lambda: "return id(outlet6).state ? x : 0.0f;"
+
+  # ---- chip on CS=P20: channel A = outlet 1, channel B = outlet 2 ----
+  - platform: rn8209d
+    cs_pin: P20
+    update_interval: ${poll_interval}
+    voltage_factor: ${cs20_voltage_factor}
+    current_a_factor: ${cs20_current_a_factor}
+    current_b_factor: ${cs20_current_b_factor}
+    power_a_factor: ${cs20_power_a_factor}
+    power_b_factor: ${cs20_power_b_factor}
+    current_a:
+      id: current1
+      internal: true
+      filters:
+        - lambda: "return id(outlet1).state ? x : 0.0f;"
+    current_b:
+      id: current2
+      internal: true
+      filters:
+        - lambda: "return id(outlet2).state ? x : 0.0f;"
+    power_a:
+      id: power1
+      internal: true
+      filters:
+        - lambda: "return id(outlet1).state ? x : 0.0f;"
+    power_b:
+      id: power2
+      internal: true
+      filters:
+        - lambda: "return id(outlet2).state ? x : 0.0f;"
+
+  # ---- display sensors ----
+  # What Home Assistant sees. No filters on purpose, so the pushes from the
+  # switch automations take effect at once.
+  - platform: template
+    name: ${outlet_label} 1 ${power_label}
+    id: power1_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(power1).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 1 ${current_label}
+    id: current1_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(current1).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 2 ${power_label}
+    id: power2_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(power2).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 2 ${current_label}
+    id: current2_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(current2).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 3 ${power_label}
+    id: power3_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(power3).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 3 ${current_label}
+    id: current3_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(current3).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 4 ${power_label}
+    id: power4_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(power4).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 4 ${current_label}
+    id: current4_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(current4).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 5 ${power_label}
+    id: power5_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(power5).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 5 ${current_label}
+    id: current5_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(current5).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 6 ${power_label}
+    id: power6_display
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(power6).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+  - platform: template
+    name: ${outlet_label} 6 ${current_label}
+    id: current6_display
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${report_interval}
+    lambda: |-
+      const float v = id(current6).state;
+      if (std::isnan(v))
+        return {};
+      return v;
+
+  # ---- totals ----
+  - platform: template
+    name: ${total_power_name}
+    id: total_power
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: ${report_interval}
+    lambda: |-
+      float sum = 0.0f;
+      for (auto *s : {id(power1), id(power2), id(power3),
+                      id(power4), id(power5), id(power6)}) {
+        if (!std::isnan(s->state))
+          sum += s->state;
+      }
+      return sum;
+
+  - platform: template
+    name: ${total_current_name}
+    id: total_current
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: ${report_interval}
+    lambda: |-
+      float sum = 0.0f;
+      for (auto *s : {id(current1), id(current2), id(current3),
+                      id(current4), id(current5), id(current6)}) {
+        if (!std::isnan(s->state))
+          sum += s->state;
+      }
+      return sum;
+
+  # ---- energy per outlet ----
+  # The hardware energy counter is unusable here: each chip can accumulate only
+  # one of its two channels (special commands 0xEA 0x5A / 0xEA 0xA5 pick which),
+  # so energy is integrated in software.
+  - platform: total_daily_energy
+    name: ${outlet_label} 1 ${energy_label}
+    power_id: power1
+    method: trapezoid
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+      - throttle: ${report_interval}
+  - platform: total_daily_energy
+    name: ${outlet_label} 2 ${energy_label}
+    power_id: power2
+    method: trapezoid
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+      - throttle: ${report_interval}
+  - platform: total_daily_energy
+    name: ${outlet_label} 3 ${energy_label}
+    power_id: power3
+    method: trapezoid
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+      - throttle: ${report_interval}
+  - platform: total_daily_energy
+    name: ${outlet_label} 4 ${energy_label}
+    power_id: power4
+    method: trapezoid
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+      - throttle: ${report_interval}
+  - platform: total_daily_energy
+    name: ${outlet_label} 5 ${energy_label}
+    power_id: power5
+    method: trapezoid
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+      - throttle: ${report_interval}
+  - platform: total_daily_energy
+    name: ${outlet_label} 6 ${energy_label}
+    power_id: power6
+    method: trapezoid
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+      - throttle: ${report_interval}
+
+  - platform: wifi_signal
+    name: ${wifi_signal_name}
+    update_interval: 60s
+    entity_category: diagnostic
+
+# ======================= OVERCURRENT PROTECTION ===================
+# get_raw_state() bypasses the filter chain and returns the value from the last
+# poll, so this keeps reacting at the polling rate rather than the reporting
+# rate. The chip's RMS registers are already averaged, so inrush currents do not
+# trip it.
+interval:
+  - interval: ${poll_interval}
+    then:
+      - if:
+          condition:
+            lambda: |-
+              float sum = 0.0f;
+              for (auto *s : {id(current1), id(current2), id(current3),
+                              id(current4), id(current5), id(current6)}) {
+                const float value = s->get_raw_state();
+                if (!std::isnan(value))
+                  sum += value;
+              }
+              return sum > ${max_current};
+          then:
+            - logger.log:
+                level: ERROR
+                format: "Overcurrent: %.2f A - switching all outlets off!"
+                args:
+                  [
+                    "id(current1).get_raw_state() + id(current2).get_raw_state() + id(current3).get_raw_state() + id(current4).get_raw_state() + id(current5).get_raw_state() + id(current6).get_raw_state()",
+                  ]
+            - switch.turn_off: outlet1
+            - switch.turn_off: outlet2
+            - switch.turn_off: outlet3
+            - switch.turn_off: outlet4
+            - switch.turn_off: outlet5
+            - switch.turn_off: outlet6
+
+button:
+  - platform: restart
+    name: ${restart_name}

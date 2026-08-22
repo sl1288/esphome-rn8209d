@@ -326,21 +326,64 @@ The component was written for the Voltcraft SEM8500 (Conrad 2359015), a
 six-outlet metering power strip: BK7231N, six relays, three RN8209D on one SPI
 bus.
 
-See [`example-sem8500.yaml`](example-sem8500.yaml) for a complete configuration,
-including per-outlet energy counters and a rebuilt overcurrent protection — the
-stock protection lived in the Tuya firmware and is lost when reflashing.
+It ships as a ready-made package, so a device config only carries what differs
+between units:
 
-Its stock firmware stores the factory calibration as plain-text JSON in the Tuya
-user-file area of the flash, outside the encrypted application image.
+```yaml
+substitutions:
+  device_name: sem8500
+  cs9_voltage_factor: "0.0001002004"   # your own values, see below
+  # ...
+
+packages:
+  remote_package:
+    url: https://github.com/sl1288/esphome-rn8209d
+    ref: main
+    files: [packages/sem8500.yaml]
+    refresh: 1d
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+```
+
+[`packages/sem8500.yaml`](packages/sem8500.yaml) holds everything structural:
+the pin map, the three metering chips, the display sensors, the per-outlet
+energy counters, the switching-edge pushes and a rebuilt overcurrent cutoff --
+the stock protection lived in the Tuya firmware and is lost when reflashing.
+[`example-sem8500.yaml`](example-sem8500.yaml) is a complete per-unit file to
+copy.
+
+Every knob is a substitution with a default, so overriding is opt-in: the
+calibration factors, `max_current`, `poll_interval`, `report_interval`, and the
+entity names (`outlet_label`, `power_label`, `voltage_name`, ...) if you want
+them in another language. Substitutions in your own file always win --
+ESPHome's package pass merges the package's defaults only for keys the
+including file does not define.
+
+Wi-Fi and API credentials deliberately stay in your file rather than the
+package: they are per-unit, and `!secret` resolves against your own
+`secrets.yaml` there.
+
+### Recovering the factory calibration
+
+The stock firmware stores it as plain-text JSON in the Tuya user-file area of
+the flash, outside the encrypted application image.
 [`tools/extract_sem8500_calibration.py`](tools/extract_sem8500_calibration.py)
-reads it out of a flash dump and prints ready-to-paste factors:
+reads it out of a flash dump and prints ready-to-paste substitutions:
 
 ```bash
 python3 tools/extract_sem8500_calibration.py flash_dump.bin --yaml
 ```
 
 Take a dump before overwriting the stock firmware. Without it you have to
-calibrate against a reference meter by hand.
+calibrate against a reference meter by hand. The package ships one reference
+unit's values as defaults, so it builds without them -- at the price of
+inheriting another unit's calibration.
 
 ## License
 
