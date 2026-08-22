@@ -2,19 +2,30 @@
 # Six-outlet energy metering power strip, converted to ESPHome.
 #
 # ======================= SAMPLING AND ENERGY ======================
-# The chips are polled every second, but the sensors report to Home Assistant
-# only every 15 s via throttle_average. That combination is deliberate:
-# throttle_average publishes the MEAN of the samples in the window, and
-# total_daily_energy (method "right", the default) multiplies each published
-# value by the elapsed interval. Mean power x time is exactly the energy of the
-# sampled signal, so nothing between samples is lost - which a plain 15 s
-# update_interval would not achieve.
+# The measuring path and the display path are deliberately separate.
 #
-# Do not switch total_daily_energy to method "trapezoid" here: it would average
-# two already-averaged values and blur the result.
+# Measuring path: the power sensors are internal and publish every second. The
+# total_daily_energy counters integrate that stream with method "trapezoid",
+# the symmetric choice for instantaneous samples - it halves the error at a
+# load edge instead of charging a whole interval at the new value, as the
+# default method "right" would. A throttle on the counters keeps Home Assistant
+# at 15 s, which is lossless because the accumulator is updated before the
+# filter chain runs.
+#
+# Display path: one copy sensor per outlet with heartbeat: 15s. It emits the
+# last value on a fixed raster, so an outlet that has just been switched on
+# shows its real power right away. copy inherits unit, device_class,
+# state_class and accuracy from its source.
+#
+# Why not throttle_average on the power sensors? Energetically that is exact
+# (mean power x elapsed time), and it was the earlier design here. But the
+# averaging window runs on a fixed scheduler raster from boot, unsynchronised
+# with switching, so the first value published after a change always mixes
+# pre- and post-switch samples and reads too low. Dropping the zeros from that
+# average is not a fix: they are what makes the energy correct.
 #
 # The chip's own registers refresh at 3.4 Hz (every ~294 ms) and PowerPA/PB are
-# averaged, not instantaneous, so a 1 s poll always reads fresh data.
+# averaged rather than instantaneous, so a 1 s poll always reads fresh data.
 #
 # ============================ HARDWARE ============================
 # Module:   Beken BK7231N (LibreTiny/bk72xx, generic-bk7231n-qfn32-tuya)
@@ -55,7 +66,7 @@
 # The stock overcurrent protection (16.8 A +-2 %) lived in the Tuya firmware and
 # is lost by reflashing. Rebuilt at the bottom of this file: above 16 A total,
 # all outlets switch off. It reads get_raw_state(), which bypasses the
-# throttle_average filter, so it keeps reacting on the 1 s poll rather than
+# filter chain, so it keeps reacting on the 1 s poll rather than
 # the 15 s at which the sensors report to Home Assistant. Do not run this
 # device without an equivalent safeguard, and check the threshold against
 # the circuit it is plugged into.
@@ -177,25 +188,23 @@ sensor:
       id: current3
       filters:
         - lambda: "return id(outlet3).state ? x : 0.0f;"
-        - throttle_average: 15s
+        - heartbeat: 15s
     current_b:
       name: "Outlet 4 Current"
       id: current4
       filters:
         - lambda: "return id(outlet4).state ? x : 0.0f;"
-        - throttle_average: 15s
+        - heartbeat: 15s
     power_a:
-      name: "Outlet 3 Power"
       id: power3
+      internal: true
       filters:
         - lambda: "return id(outlet3).state ? x : 0.0f;"
-        - throttle_average: 15s
     power_b:
-      name: "Outlet 4 Power"
       id: power4
+      internal: true
       filters:
         - lambda: "return id(outlet4).state ? x : 0.0f;"
-        - throttle_average: 15s
 
   # ---- chip on CS=P15: channel A = outlet 5, channel B = outlet 6 ----
   - platform: rn8209d
@@ -211,25 +220,23 @@ sensor:
       id: current5
       filters:
         - lambda: "return id(outlet5).state ? x : 0.0f;"
-        - throttle_average: 15s
+        - heartbeat: 15s
     current_b:
       name: "Outlet 6 Current"
       id: current6
       filters:
         - lambda: "return id(outlet6).state ? x : 0.0f;"
-        - throttle_average: 15s
+        - heartbeat: 15s
     power_a:
-      name: "Outlet 5 Power"
       id: power5
+      internal: true
       filters:
         - lambda: "return id(outlet5).state ? x : 0.0f;"
-        - throttle_average: 15s
     power_b:
-      name: "Outlet 6 Power"
       id: power6
+      internal: true
       filters:
         - lambda: "return id(outlet6).state ? x : 0.0f;"
-        - throttle_average: 15s
 
   # ---- chip on CS=P20: channel A = outlet 1, channel B = outlet 2 ----
   - platform: rn8209d
@@ -245,25 +252,57 @@ sensor:
       id: current1
       filters:
         - lambda: "return id(outlet1).state ? x : 0.0f;"
-        - throttle_average: 15s
+        - heartbeat: 15s
     current_b:
       name: "Outlet 2 Current"
       id: current2
       filters:
         - lambda: "return id(outlet2).state ? x : 0.0f;"
-        - throttle_average: 15s
+        - heartbeat: 15s
     power_a:
-      name: "Outlet 1 Power"
       id: power1
+      internal: true
       filters:
         - lambda: "return id(outlet1).state ? x : 0.0f;"
-        - throttle_average: 15s
     power_b:
-      name: "Outlet 2 Power"
       id: power2
+      internal: true
       filters:
         - lambda: "return id(outlet2).state ? x : 0.0f;"
-        - throttle_average: 15s
+
+  # ---- display copies ----
+  # What Home Assistant sees for power. The sources above are internal and
+  # feed the energy counters at 1 Hz; these report the last value every 15 s.
+  - platform: copy
+    source_id: power1
+    name: "Outlet 1 Power"
+    filters:
+      - heartbeat: 15s
+  - platform: copy
+    source_id: power2
+    name: "Outlet 2 Power"
+    filters:
+      - heartbeat: 15s
+  - platform: copy
+    source_id: power3
+    name: "Outlet 3 Power"
+    filters:
+      - heartbeat: 15s
+  - platform: copy
+    source_id: power4
+    name: "Outlet 4 Power"
+    filters:
+      - heartbeat: 15s
+  - platform: copy
+    source_id: power5
+    name: "Outlet 5 Power"
+    filters:
+      - heartbeat: 15s
+  - platform: copy
+    source_id: power6
+    name: "Outlet 6 Power"
+    filters:
+      - heartbeat: 15s
 
   # ---- totals ----
   - platform: template
@@ -306,45 +345,57 @@ sensor:
   - platform: total_daily_energy
     name: "Outlet 1 Energy"
     power_id: power1
+    method: trapezoid
     unit_of_measurement: kWh
     accuracy_decimals: 3
     filters:
       - multiply: 0.001
+      - throttle: 15s
   - platform: total_daily_energy
     name: "Outlet 2 Energy"
     power_id: power2
+    method: trapezoid
     unit_of_measurement: kWh
     accuracy_decimals: 3
     filters:
       - multiply: 0.001
+      - throttle: 15s
   - platform: total_daily_energy
     name: "Outlet 3 Energy"
     power_id: power3
+    method: trapezoid
     unit_of_measurement: kWh
     accuracy_decimals: 3
     filters:
       - multiply: 0.001
+      - throttle: 15s
   - platform: total_daily_energy
     name: "Outlet 4 Energy"
     power_id: power4
+    method: trapezoid
     unit_of_measurement: kWh
     accuracy_decimals: 3
     filters:
       - multiply: 0.001
+      - throttle: 15s
   - platform: total_daily_energy
     name: "Outlet 5 Energy"
     power_id: power5
+    method: trapezoid
     unit_of_measurement: kWh
     accuracy_decimals: 3
     filters:
       - multiply: 0.001
+      - throttle: 15s
   - platform: total_daily_energy
     name: "Outlet 6 Energy"
     power_id: power6
+    method: trapezoid
     unit_of_measurement: kWh
     accuracy_decimals: 3
     filters:
       - multiply: 0.001
+      - throttle: 15s
 
   - platform: wifi_signal
     name: "Wi-Fi Signal"
@@ -360,7 +411,7 @@ interval:
       - if:
           condition:
             lambda: |-
-              // get_raw_state() bypasses throttle_average and returns the value
+              // get_raw_state() bypasses the filter chain and returns the value
               // from the last poll, so this still reacts every 1 s.
               float sum = 0.0f;
               for (auto *s : {id(current1), id(current2), id(current3),

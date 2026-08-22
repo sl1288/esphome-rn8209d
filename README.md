@@ -145,28 +145,57 @@ the power sensor publishes *is* the integration.
 
 That makes a plain slow `update_interval` a poor way to reduce Home Assistant
 traffic: a load switching between two samples is charged for the whole interval,
-up to `P × interval` of error per transition — 8 Wh for a 2 kW load at 15 s.
+up to `P x interval` of error per transition -- 8 Wh for a 2 kW load at 15 s.
 Errors from switch-on and switch-off have opposite signs and largely cancel over
 many cycles, but bursts shorter than the interval can be missed entirely.
 
-Poll fast and average on the way out instead:
+**Keep the measuring path and the display path separate.** Poll fast, integrate
+that stream, and give Home Assistant its own slow view:
 
 ```yaml
+sensor:
+  - platform: rn8209d
+    cs_pin: P9
+    update_interval: 1s
     power_a:
-      name: "Outlet 1 Power"
-      filters:
-        - throttle_average: 15s
+      id: power_a_raw          # internal: no name given, so not exported
+      internal: true
+
+  # Energy integrates the 1 Hz stream. trapezoid is the symmetric choice for
+  # instantaneous samples; the throttle keeps HA at 15 s and is lossless,
+  # because the accumulator is updated before the filter chain runs.
+  - platform: total_daily_energy
+    name: "Outlet Energy"
+    power_id: power_a_raw
+    method: trapezoid
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+      - throttle: 15s
+
+  # What HA shows: the last value on a fixed 15 s raster. copy inherits unit,
+  # device_class, state_class and accuracy from the source.
+  - platform: copy
+    source_id: power_a_raw
+    name: "Outlet Power"
+    filters:
+      - heartbeat: 15s
 ```
 
-`throttle_average` publishes the *mean* of the samples in the window, and mean
-power × elapsed time is exactly the energy of the sampled signal — nothing
-between samples is lost. Do **not** switch to `method: trapezoid` in this setup:
-it would average two already-averaged values and blur the result.
+`throttle_average: 15s` on the power sensor is the obvious shortcut, and it is
+energetically exact -- mean power times elapsed time is the integral. It has one
+flaw that only shows on hardware: the averaging window runs on a fixed scheduler
+raster from boot, unsynchronised with anything, so the first value published
+after a load changes mixes pre- and post-change samples. Switch an outlet on and
+its power reads too low for up to one window. Dropping the zeros from that
+average is not a fix either -- they are exactly what makes the energy correct.
+Hence the split above.
 
 One consequence worth knowing: anything that reads a sensor's `.state` in a
-lambda now sees the throttled value. If you drive a protective action from it,
-read `get_raw_state()` instead — that returns the value from the last poll,
-before the filters, so the action keeps reacting at the polling rate. The example
+lambda sees the filtered value. If you drive a protective action from it, read
+`get_raw_state()` instead -- that returns the value from the last poll, before
+the filters, so the action keeps reacting at the polling rate. The example
 config uses this for its overcurrent cutoff.
 
 `total_daily_energy` keeps its counter in flash (`restore` defaults to true).
