@@ -1,6 +1,21 @@
 # Voltcraft SEM8500 (Conrad 2359015)
 # Six-outlet energy metering power strip, converted to ESPHome.
 #
+# ======================= SAMPLING AND ENERGY ======================
+# The chips are polled every second, but the sensors report to Home Assistant
+# only every 15 s via throttle_average. That combination is deliberate:
+# throttle_average publishes the MEAN of the samples in the window, and
+# total_daily_energy (method "right", the default) multiplies each published
+# value by the elapsed interval. Mean power x time is exactly the energy of the
+# sampled signal, so nothing between samples is lost - which a plain 15 s
+# update_interval would not achieve.
+#
+# Do not switch total_daily_energy to method "trapezoid" here: it would average
+# two already-averaged values and blur the result.
+#
+# The chip's own registers refresh at 3.4 Hz (every ~294 ms) and PowerPA/PB are
+# averaged, not instantaneous, so a 1 s poll always reads fresh data.
+#
 # ============================ HARDWARE ============================
 # Module:   Beken BK7231N (LibreTiny/bk72xx, generic-bk7231n-qfn32-tuya)
 # Metering: 3x Renergy RN8209D, device ID 0x820900 each, on a software SPI bus
@@ -39,8 +54,11 @@
 # =========================== SAFETY ===========================
 # The stock overcurrent protection (16.8 A +-2 %) lived in the Tuya firmware and
 # is lost by reflashing. Rebuilt at the bottom of this file: above 16 A total,
-# all outlets switch off. Do not run this device without an equivalent
-# safeguard, and check the threshold against the circuit it is plugged into.
+# all outlets switch off. It reads get_raw_state(), which bypasses the
+# throttle_average filter, so it keeps reacting on the 1 s poll rather than
+# the 15 s at which the sensors report to Home Assistant. Do not run this
+# device without an equivalent safeguard, and check the threshold against
+# the circuit it is plugged into.
 
 esphome:
   name: sem8500
@@ -127,7 +145,7 @@ sensor:
   # ---- chip on CS=P9: channel A = outlet 3, channel B = outlet 4 ----
   - platform: rn8209d
     cs_pin: P9
-    update_interval: 2s
+    update_interval: 1s
     voltage_factor: 0.0001002004 # 1 / (10 * 998)
     current_a_factor: 0.0000075758 # 1 / (1000 * 132)
     current_b_factor: 0.0000285714 # 1 / (1000 * 35)
@@ -135,8 +153,12 @@ sensor:
     power_b_factor: 0.0000938105
     voltage:
       name: "Voltage"
+      filters:
+        - throttle_average: 15s
     frequency:
       name: "Frequency"
+      filters:
+        - throttle_average: 15s
     # With the relay open no current flows and the raw values show only noise.
     # The filter pins them to zero so neither the reading nor the energy counter
     # drifts. Note this is a gate on the relay state, not a current offset.
@@ -145,26 +167,30 @@ sensor:
       id: current3
       filters:
         - lambda: "return id(outlet3).state ? x : 0.0f;"
+        - throttle_average: 15s
     current_b:
       name: "Outlet 4 Current"
       id: current4
       filters:
         - lambda: "return id(outlet4).state ? x : 0.0f;"
+        - throttle_average: 15s
     power_a:
       name: "Outlet 3 Power"
       id: power3
       filters:
         - lambda: "return id(outlet3).state ? x : 0.0f;"
+        - throttle_average: 15s
     power_b:
       name: "Outlet 4 Power"
       id: power4
       filters:
         - lambda: "return id(outlet4).state ? x : 0.0f;"
+        - throttle_average: 15s
 
   # ---- chip on CS=P15: channel A = outlet 5, channel B = outlet 6 ----
   - platform: rn8209d
     cs_pin: P15
-    update_interval: 2s
+    update_interval: 1s
     voltage_factor: 0.0001001001 # 1 / (10 * 999)
     current_a_factor: 0.0000075758
     current_b_factor: 0.0000285714
@@ -175,26 +201,30 @@ sensor:
       id: current5
       filters:
         - lambda: "return id(outlet5).state ? x : 0.0f;"
+        - throttle_average: 15s
     current_b:
       name: "Outlet 6 Current"
       id: current6
       filters:
         - lambda: "return id(outlet6).state ? x : 0.0f;"
+        - throttle_average: 15s
     power_a:
       name: "Outlet 5 Power"
       id: power5
       filters:
         - lambda: "return id(outlet5).state ? x : 0.0f;"
+        - throttle_average: 15s
     power_b:
       name: "Outlet 6 Power"
       id: power6
       filters:
         - lambda: "return id(outlet6).state ? x : 0.0f;"
+        - throttle_average: 15s
 
   # ---- chip on CS=P20: channel A = outlet 1, channel B = outlet 2 ----
   - platform: rn8209d
     cs_pin: P20
-    update_interval: 2s
+    update_interval: 1s
     voltage_factor: 0.0001002004
     current_a_factor: 0.0000075188 # 1 / (1000 * 133)
     current_b_factor: 0.0000285714
@@ -205,21 +235,25 @@ sensor:
       id: current1
       filters:
         - lambda: "return id(outlet1).state ? x : 0.0f;"
+        - throttle_average: 15s
     current_b:
       name: "Outlet 2 Current"
       id: current2
       filters:
         - lambda: "return id(outlet2).state ? x : 0.0f;"
+        - throttle_average: 15s
     power_a:
       name: "Outlet 1 Power"
       id: power1
       filters:
         - lambda: "return id(outlet1).state ? x : 0.0f;"
+        - throttle_average: 15s
     power_b:
       name: "Outlet 2 Power"
       id: power2
       filters:
         - lambda: "return id(outlet2).state ? x : 0.0f;"
+        - throttle_average: 15s
 
   # ---- totals ----
   - platform: template
@@ -229,7 +263,7 @@ sensor:
     device_class: power
     state_class: measurement
     accuracy_decimals: 1
-    update_interval: 2s
+    update_interval: 15s
     lambda: |-
       float sum = 0.0f;
       for (auto *s : {id(power1), id(power2), id(power3),
@@ -246,7 +280,7 @@ sensor:
     device_class: current
     state_class: measurement
     accuracy_decimals: 3
-    update_interval: 2s
+    update_interval: 15s
     lambda: |-
       float sum = 0.0f;
       for (auto *s : {id(current1), id(current2), id(current3),
@@ -311,16 +345,29 @@ sensor:
 # The strip is rated 16 A. The chip's RMS registers are already averaged, so
 # inrush currents do not trip this.
 interval:
-  - interval: 2s
+  - interval: 1s
     then:
       - if:
           condition:
-            lambda: "return !std::isnan(id(total_current).state) && id(total_current).state > 16.0f;"
+            lambda: |-
+              // get_raw_state() bypasses throttle_average and returns the value
+              // from the last poll, so this still reacts every 1 s.
+              float sum = 0.0f;
+              for (auto *s : {id(current1), id(current2), id(current3),
+                              id(current4), id(current5), id(current6)}) {
+                const float value = s->get_raw_state();
+                if (!std::isnan(value))
+                  sum += value;
+              }
+              return sum > 16.0f;
           then:
             - logger.log:
                 level: ERROR
                 format: "Overcurrent: %.2f A - switching all outlets off!"
-                args: ["id(total_current).state"]
+                args:
+                  [
+                    "id(current1).get_raw_state() + id(current2).get_raw_state() + id(current3).get_raw_state() + id(current4).get_raw_state() + id(current5).get_raw_state() + id(current6).get_raw_state()",
+                  ]
             - switch.turn_off: outlet1
             - switch.turn_off: outlet2
             - switch.turn_off: outlet3

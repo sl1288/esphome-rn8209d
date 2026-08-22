@@ -19,8 +19,8 @@ so it works on any ESPHome platform with digital I/O.
 A software bus is not a stylistic choice: LibreTiny does not implement Arduino
 `SPI` for BK72xx, and ESPHome's `spi` component excludes the platform, so a
 hardware SPI bus is simply not available there. Measured cost on a BK7231N is
-about 3 ms per chip poll — under 1 % CPU at a 2 s interval, and irrelevant next
-to the chip's own RMS refresh rate of 3.4 Hz.
+about 3 ms per chip poll — roughly 1 % CPU with three chips at a 1 s interval,
+and irrelevant next to the chip's own register refresh rate of 3.4 Hz.
 
 ## Installation
 
@@ -44,7 +44,7 @@ rn8209d:
 sensor:
   - platform: rn8209d
     cs_pin: P9
-    update_interval: 2s
+    update_interval: 1s
     voltage_factor: 0.0001002004
     current_a_factor: 0.0000075758
     current_b_factor: 0.0000285714
@@ -136,6 +136,43 @@ real loads untouched.
 energy counter can accumulate only one of its two channels at a time (special
 commands `0xEA 0x5A` / `0xEA 0xA5` select which), so for two outlets per chip use
 ESPHome's `total_daily_energy` on the power sensors.
+
+**How you report to Home Assistant decides how accurate that energy is.**
+`total_daily_energy` does not integrate on a clock of its own: it hooks the power
+sensor's state callback and, with the default method `right`, multiplies each
+published value by the time elapsed since the previous publication. So whatever
+the power sensor publishes *is* the integration.
+
+That makes a plain slow `update_interval` a poor way to reduce Home Assistant
+traffic: a load switching between two samples is charged for the whole interval,
+up to `P × interval` of error per transition — 8 Wh for a 2 kW load at 15 s.
+Errors from switch-on and switch-off have opposite signs and largely cancel over
+many cycles, but bursts shorter than the interval can be missed entirely.
+
+Poll fast and average on the way out instead:
+
+```yaml
+    power_a:
+      name: "Outlet 1 Power"
+      filters:
+        - throttle_average: 15s
+```
+
+`throttle_average` publishes the *mean* of the samples in the window, and mean
+power × elapsed time is exactly the energy of the sampled signal — nothing
+between samples is lost. Do **not** switch to `method: trapezoid` in this setup:
+it would average two already-averaged values and blur the result.
+
+One consequence worth knowing: anything that reads a sensor's `.state` in a
+lambda now sees the throttled value. If you drive a protective action from it,
+read `get_raw_state()` instead — that returns the value from the last poll,
+before the filters, so the action keeps reacting at the polling rate. The example
+config uses this for its overcurrent cutoff.
+
+There is little point pushing the poll below about a second. The registers
+refresh at 3.4 Hz and `PowerPA`/`PowerPB` are averaged rather than instantaneous,
+so sampling is unbiased and the residual error on a daily total stays well under
+the chip's own ±1 % accuracy — which is what actually limits the result.
 
 ## Protocol notes
 
