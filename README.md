@@ -169,6 +169,21 @@ read `get_raw_state()` instead — that returns the value from the last poll,
 before the filters, so the action keeps reacting at the polling rate. The example
 config uses this for its overcurrent cutoff.
 
+`total_daily_energy` keeps its counter in flash (`restore` defaults to true).
+That costs nothing while nothing changes: `save()` only queues the value in RAM,
+and the periodic `sync()` compares against the stored copy and skips unchanged
+values -- so with the relay gate holding power at zero, an idle outlet writes
+nothing at all. Under load the six counters do change, and the default
+`flash_write_interval` of 60 s means one write per minute. The example raises it:
+
+```yaml
+preferences:
+  flash_write_interval: 300s
+```
+
+That cuts the wear fivefold and risks up to five minutes of counter state on an
+unclean power loss -- a reasonable trade for a board sealed inside a power strip.
+
 There is little point pushing the poll below about a second. The registers
 refresh at 3.4 Hz and `PowerPA`/`PowerPB` are averaged rather than instantaneous,
 so sampling is unbiased and the residual error on a daily total stays well under

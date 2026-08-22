@@ -97,6 +97,16 @@ captive_portal:
 # unreachable, and this device is not easy to open again.
 web_server:
 
+# The energy counters call save() on every publish, but that only queues the
+# value in RAM. sync() writes to flash on this interval and skips values that
+# have not changed - with all sockets off the relay gate holds power at 0, so
+# nothing changes and nothing is written at all. Raising the interval from the
+# default 60 s to 300 s cuts the wear in the loaded case fivefold; the cost is
+# up to five minutes of counter state on an unclean power loss. For a board
+# sealed inside a mains power strip that trade is worth making.
+preferences:
+  flash_write_interval: 300s
+
 time:
   - platform: sntp
     id: sntp_time
