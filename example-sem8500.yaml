@@ -66,3 +66,10 @@ api:
 ota:
   - platform: esphome
     password: !secret ota_password
+
+# Not provided by the package, so you can leave either out. The web server is
+# worth keeping: it is the rescue path for OTA should the API become
+# unreachable, and this device is not easy to open again for serial flashing.
+captive_portal:
+
+web_server:

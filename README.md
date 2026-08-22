@@ -349,7 +349,16 @@ wifi:
 api:
   encryption:
     key: !secret api_encryption_key
+
+captive_portal:
+
+web_server:
 ```
+
+`captive_portal` and `web_server` are not in the package so you can leave either
+out. Keeping the web server is strongly recommended on this device: it is the
+rescue path for OTA should the API become unreachable, and a power strip is not
+easy to open again for serial flashing.
 
 [`packages/sem8500.yaml`](packages/sem8500.yaml) holds everything structural:
 the pin map, the three metering chips, the display sensors, the per-outlet

@@ -147,11 +147,13 @@ logger:
 ota:
   - platform: esphome
 
-captive_portal:
-
-# Keep the web server: it is the rescue path for OTA should the API become
-# unreachable, and this device is not easy to open again.
-web_server:
+# captive_portal and web_server are deliberately NOT part of this package - add
+# them in your own file if you want them. Strongly recommended for this device:
+# the web server is the rescue path for OTA should the API become unreachable,
+# and a power strip is not easy to open again for serial flashing.
+#
+#   captive_portal:
+#   web_server:
 
 time:
   - platform: sntp
