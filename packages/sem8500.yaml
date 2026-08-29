@@ -81,6 +81,14 @@ substitutions:
   # Pin the component to a tag or commit for reproducible builds.
   component_ref: main
 
+  # Home Assistant derives manufacturer and model from the project name,
+  # splitting it at the dot - without it the device shows up as its chip and
+  # board ("generic-bk7231n-qfn32-tuya by Beken"). Exactly one dot is required.
+  # Note this also changes the reported software version to
+  # "<project_version> (ESPHome <version>)".
+  project_name: Conrad.Voltcraft SEM8500
+  project_version: "1.0"
+
   # Total current above which all outlets are switched off. The strip is
   # rated 16 A.
   max_current: "16.0"
@@ -132,6 +140,9 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
+  project:
+    name: ${project_name}
+    version: ${project_version}
 
 bk72xx:
   board: generic-bk7231n-qfn32-tuya
