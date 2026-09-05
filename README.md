@@ -326,8 +326,11 @@ The component was written for the Voltcraft SEM8500 (Conrad 2359015), a
 six-outlet metering power strip: BK7231N, six relays, three RN8209D on one SPI
 bus.
 
-It ships as a ready-made package, so a device config only carries what differs
-between units:
+It ships as a ready-made package. The package itself now lives in
+[sl1288/esphome-packages](https://github.com/sl1288/esphome-packages), so that
+this repository stays the component it is named after; the component reference
+below still points here. A device config only carries what differs between
+units:
 
 ```yaml
 substitutions:
@@ -337,7 +340,7 @@ substitutions:
 
 packages:
   remote_package:
-    url: https://github.com/sl1288/esphome-rn8209d
+    url: https://github.com/sl1288/esphome-packages
     ref: main
     files: [packages/sem8500.yaml]
     refresh: 1d
@@ -369,12 +372,13 @@ strongly recommended on this device: it is the rescue path for OTA should the
 API become unreachable, and a power strip is not easy to open again for serial
 flashing.
 
-[`packages/sem8500.yaml`](packages/sem8500.yaml) holds everything structural:
+[`packages/sem8500.yaml`](https://github.com/sl1288/esphome-packages/blob/main/packages/sem8500.yaml)
+holds everything structural:
 the pin map, the three metering chips, the display sensors, the per-outlet
 energy counters, the switching-edge pushes and a rebuilt overcurrent cutoff --
 the stock protection lived in the Tuya firmware and is lost when reflashing.
-[`example-sem8500.yaml`](example-sem8500.yaml) is a complete per-unit file to
-copy.
+[`examples/sem8500.yaml`](https://github.com/sl1288/esphome-packages/blob/main/examples/sem8500.yaml)
+is a complete per-unit file to copy.
 
 Every knob is a substitution with a default, so overriding is opt-in: the
 calibration factors, `max_current`, `poll_interval`, `report_interval`, and the
