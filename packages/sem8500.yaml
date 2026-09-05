@@ -63,6 +63,13 @@
 # throttling filter would swallow the pushes, and heartbeat would additionally
 # re-publish its own stale value on the next tick and undo them.
 #
+# On top of the tick and the switching edges, each power channel carries an
+# on_value trigger that publishes as soon as the reading moves by more than
+# report_delta. Without it a load that changes its own draw - a fan stepping up,
+# a heating element cycling - would sit unreported for up to report_interval,
+# because no switching event occurs. The trigger only fires while the outlet is
+# on, and only once the display sensor holds a real value.
+#
 # Do not put throttle_average on a sensor that feeds an energy counter. It is
 # energetically exact, but its window runs on a fixed scheduler raster from boot
 # and is unsynchronised with switching, so the first value after a change mixes
@@ -96,6 +103,12 @@ substitutions:
   # How often the chips are read, and how often Home Assistant is updated.
   poll_interval: 1s
   report_interval: 15s
+
+  # A step in the load this large is reported straight away instead of waiting
+  # for the next report_interval tick. Appliances change their own draw with no
+  # switching event - a fan step, a heating element cycling - and the edge
+  # pushes cannot see that. Keep it above the measurement noise.
+  report_delta: "10.0"
 
   # ---- calibration ----
   # These are the values of ONE reference unit. Coefficients vary between
@@ -388,11 +401,39 @@ sensor:
       internal: true
       filters:
         - lambda: "return id(outlet3).state ? x : 0.0f;"
+      on_value:
+        - if:
+            condition:
+              lambda: |-
+                return id(outlet3).state &&
+                       !std::isnan(id(power3_display).state) &&
+                       fabsf(x - id(power3_display).state) > ${report_delta};
+            then:
+              - sensor.template.publish:
+                  id: power3_display
+                  state: !lambda "return x;"
+              - sensor.template.publish:
+                  id: current3_display
+                  state: !lambda "return std::isnan(id(current3).state) ? 0.0f : id(current3).state;"
     power_b:
       id: power4
       internal: true
       filters:
         - lambda: "return id(outlet4).state ? x : 0.0f;"
+      on_value:
+        - if:
+            condition:
+              lambda: |-
+                return id(outlet4).state &&
+                       !std::isnan(id(power4_display).state) &&
+                       fabsf(x - id(power4_display).state) > ${report_delta};
+            then:
+              - sensor.template.publish:
+                  id: power4_display
+                  state: !lambda "return x;"
+              - sensor.template.publish:
+                  id: current4_display
+                  state: !lambda "return std::isnan(id(current4).state) ? 0.0f : id(current4).state;"
 
   # ---- chip on CS=P15: channel A = outlet 5, channel B = outlet 6 ----
   - platform: rn8209d
@@ -418,11 +459,39 @@ sensor:
       internal: true
       filters:
         - lambda: "return id(outlet5).state ? x : 0.0f;"
+      on_value:
+        - if:
+            condition:
+              lambda: |-
+                return id(outlet5).state &&
+                       !std::isnan(id(power5_display).state) &&
+                       fabsf(x - id(power5_display).state) > ${report_delta};
+            then:
+              - sensor.template.publish:
+                  id: power5_display
+                  state: !lambda "return x;"
+              - sensor.template.publish:
+                  id: current5_display
+                  state: !lambda "return std::isnan(id(current5).state) ? 0.0f : id(current5).state;"
     power_b:
       id: power6
       internal: true
       filters:
         - lambda: "return id(outlet6).state ? x : 0.0f;"
+      on_value:
+        - if:
+            condition:
+              lambda: |-
+                return id(outlet6).state &&
+                       !std::isnan(id(power6_display).state) &&
+                       fabsf(x - id(power6_display).state) > ${report_delta};
+            then:
+              - sensor.template.publish:
+                  id: power6_display
+                  state: !lambda "return x;"
+              - sensor.template.publish:
+                  id: current6_display
+                  state: !lambda "return std::isnan(id(current6).state) ? 0.0f : id(current6).state;"
 
   # ---- chip on CS=P20: channel A = outlet 1, channel B = outlet 2 ----
   - platform: rn8209d
@@ -448,11 +517,39 @@ sensor:
       internal: true
       filters:
         - lambda: "return id(outlet1).state ? x : 0.0f;"
+      on_value:
+        - if:
+            condition:
+              lambda: |-
+                return id(outlet1).state &&
+                       !std::isnan(id(power1_display).state) &&
+                       fabsf(x - id(power1_display).state) > ${report_delta};
+            then:
+              - sensor.template.publish:
+                  id: power1_display
+                  state: !lambda "return x;"
+              - sensor.template.publish:
+                  id: current1_display
+                  state: !lambda "return std::isnan(id(current1).state) ? 0.0f : id(current1).state;"
     power_b:
       id: power2
       internal: true
       filters:
         - lambda: "return id(outlet2).state ? x : 0.0f;"
+      on_value:
+        - if:
+            condition:
+              lambda: |-
+                return id(outlet2).state &&
+                       !std::isnan(id(power2_display).state) &&
+                       fabsf(x - id(power2_display).state) > ${report_delta};
+            then:
+              - sensor.template.publish:
+                  id: power2_display
+                  state: !lambda "return x;"
+              - sensor.template.publish:
+                  id: current2_display
+                  state: !lambda "return std::isnan(id(current2).state) ? 0.0f : id(current2).state;"
 
   # ---- display sensors ----
   # What Home Assistant sees. No filters on purpose, so the pushes from the
