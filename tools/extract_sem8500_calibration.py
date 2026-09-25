@@ -13,6 +13,17 @@ The blob sits *outside* the encrypted application image, so no decryption is
 needed - a plain scan of the raw dump finds it. (If you also want to inspect
 the application itself, decrypt it with ``bk7231tools dissect_dump -e``.)
 
+The dump may hold many differing copies of the blob. They are not backups but
+a write history: the factory calibration stores each step as it goes, one chip
+and channel at a time, each into a fresh 4 KiB block, starting from a template
+that is identical on every unit. Only one copy is current. An index sector in
+front of the data blocks names it: after the key (a 32-byte, NUL-padded field)
+follow the blob length and the block number, both as little-endian uint32,
+counted in 4 KiB blocks from the start of that index sector. A second index
+sector directly behind it is a backup copy. Taking the first blob found instead
+yields the uncalibrated template - recognisable by chips 1 and 2 reading
+exactly V=997, IA=133, IB=35.
+
 Each chip measures one shared voltage and two independent current channels,
 A and B, so three chips cover the six sockets.
 
@@ -35,8 +46,8 @@ Usage:
 
 ``--yaml`` prints the ``csN_*`` substitutions consumed by the SEM8500 package
 (``packages/sem8500.yaml`` in https://github.com/sl1288/esphome-packages);
-paste them under ``substitutions:`` of your device file. ``--sensors`` prints complete ``rn8209d`` sensor blocks for configs that
-do not use the package.
+paste them under ``substitutions:`` of your device file. ``--sensors`` prints
+complete ``rn8209d`` sensor blocks for configs that do not use the package.
 
 Obtain a dump with BK7231Flasher or ltchiptool before overwriting the stock
 firmware. Keep it - without it you have to calibrate against a reference meter
@@ -76,6 +87,11 @@ POWER_SHIFT = 32768
 
 BLOB_PATTERN = re.compile(rb'\{"[0-9]_V":[0-9]+(?:,"[0-9]_[A-Z]{1,2}":[0-9]+)+\}')
 
+# Index entry of the Tuya key-value store, see the module docstring.
+INDEX_KEY = b"coe_save_key"
+INDEX_KEY_FIELD = 32
+BLOCK_SIZE = 0x1000
+
 
 def find_blobs(data: bytes) -> list[tuple[int, dict[str, int]]]:
     """Return every calibration blob found, as (offset, parsed dict)."""
@@ -89,6 +105,30 @@ def find_blobs(data: bytes) -> list[tuple[int, dict[str, int]]]:
             continue
         results.append((match.start(), {k: int(v) for k, v in parsed.items()}))
     return results
+
+
+def indexed_offset(data: bytes, blobs: list[tuple[int, dict[str, int]]]) -> int | None:
+    """Return the offset of the blob the key-value index marks as current.
+
+    An index entry only counts if its length and block number point exactly at
+    the start of a blob of that length, so a misread entry - or the backup
+    index sector, whose block numbers are relative to the primary one - can
+    never select a wrong blob.
+    """
+    lengths = {
+        offset: len(BLOB_PATTERN.match(data, offset).group()) for offset, _ in blobs
+    }
+    key_field = INDEX_KEY.ljust(INDEX_KEY_FIELD, b"\0")
+    position = data.find(key_field)
+    while position != -1:
+        entry = position + INDEX_KEY_FIELD
+        length = int.from_bytes(data[entry : entry + 4], "little")
+        block = int.from_bytes(data[entry + 4 : entry + 8], "little")
+        target = (position & ~(BLOCK_SIZE - 1)) + block * BLOCK_SIZE
+        if lengths.get(target) == length:
+            return target
+        position = data.find(key_field, position + 1)
+    return None
 
 
 def factors(coefficients: dict[str, int], index: int) -> dict[str, float] | None:
@@ -151,20 +191,25 @@ def main() -> int:
         )
         return 1
 
-    # Duplicates are normal: the Tuya user-file area keeps a backup copy.
-    offset, coefficients = blobs[0]
-    if len({json.dumps(b, sort_keys=True) for _, b in blobs}) > 1:
-        print(
-            f"Warning: {len(blobs)} differing blobs found, using the one at "
-            f"0x{offset:06X}. Inspect the others manually.",
-            file=sys.stderr,
-        )
+    # Several differing copies are normal: they are the calibration history.
+    offset = indexed_offset(data, blobs)
+    if offset is None:
+        # No usable index: fall back to the highest offset, which is the
+        # newest copy as long as the store has not wrapped around.
+        offset = blobs[-1][0]
+        if len({json.dumps(b, sort_keys=True) for _, b in blobs}) > 1:
+            print(
+                f"Warning: {len(blobs)} differing blobs and no usable "
+                f"{INDEX_KEY.decode()} index entry found, using the last one at "
+                f"0x{offset:06X}. Inspect the others manually.",
+                file=sys.stderr,
+            )
+    coefficients = dict(blobs)[offset]
 
     if table:
         print(f"Found calibration at flash offset 0x{offset:06X}")
         if len(blobs) > 1:
-            others = ", ".join(f"0x{o:06X}" for o, _ in blobs[1:])
-            print(f"({len(blobs)} copies in total: {others} - backups, normal)")
+            print(f"({len(blobs)} copies in total - older ones are calibration history)")
         print()
         print("Raw coefficients:")
         print(json.dumps(coefficients, sort_keys=True))
