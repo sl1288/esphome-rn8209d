@@ -31,6 +31,12 @@ firmware uses PA/PB for is unknown; most likely the energy pulse constant.
 Usage:
     python3 extract_sem8500_calibration.py FLASH_DUMP.bin
     python3 extract_sem8500_calibration.py FLASH_DUMP.bin --yaml
+    python3 extract_sem8500_calibration.py FLASH_DUMP.bin --sensors
+
+``--yaml`` prints the ``csN_*`` substitutions consumed by the SEM8500 package
+(``packages/sem8500.yaml`` in https://github.com/sl1288/esphome-packages);
+paste them under ``substitutions:`` of your device file. ``--sensors`` prints complete ``rn8209d`` sensor blocks for configs that
+do not use the package.
 
 Obtain a dump with BK7231Flasher or ltchiptool before overwriting the stock
 firmware. Keep it - without it you have to calibrate against a reference meter
@@ -56,6 +62,14 @@ CHIPS = [
     ("P15", "Socket 5", "Socket 6"),
     ("P20", "Socket 1", "Socket 2"),
 ]
+
+FACTOR_KEYS = (
+    "voltage_factor",
+    "current_a_factor",
+    "current_b_factor",
+    "power_a_factor",
+    "power_b_factor",
+)
 
 # Internal relation of the RN8209D: raw_P = raw_U * raw_I / 2**15
 POWER_SHIFT = 32768
@@ -105,12 +119,19 @@ def main() -> int:
         description="Extract RN8209D calibration from a SEM8500 flash dump."
     )
     parser.add_argument("dump", help="raw flash dump (2 MiB, e.g. from BK7231Flasher)")
-    parser.add_argument(
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument(
         "--yaml",
         action="store_true",
-        help="print ready-to-paste ESPHome sensor blocks instead of a table",
+        help="print ready-to-paste substitutions for the SEM8500 package",
+    )
+    output.add_argument(
+        "--sensors",
+        action="store_true",
+        help="print complete rn8209d sensor blocks (for configs without the package)",
     )
     args = parser.parse_args()
+    table = not (args.yaml or args.sensors)
 
     try:
         with open(args.dump, "rb") as handle:
@@ -139,7 +160,7 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    if not args.yaml:
+    if table:
         print(f"Found calibration at flash offset 0x{offset:06X}")
         if len(blobs) > 1:
             others = ", ".join(f"0x{o:06X}" for o, _ in blobs[1:])
@@ -156,17 +177,20 @@ def main() -> int:
             continue
 
         if args.yaml:
+            if index == 0:
+                print("  # Calibration of THIS unit, read from its flash dump with")
+                print("  # tools/extract_sem8500_calibration.py.")
+            else:
+                print()
+            prefix = "cs" + cs_pin.lstrip("P")
+            for key in FACTOR_KEYS:
+                print(f'  {prefix}_{key}: "{computed[key]:.10f}"')
+        elif args.sensors:
             print(f"  # Coefficient set {index} -> {socket_a} (A) and {socket_b} (B)")
             print("  - platform: rn8209d")
             print(f"    cs_pin: {cs_pin}")
             print("    update_interval: 2s")
-            for key in (
-                "voltage_factor",
-                "current_a_factor",
-                "current_b_factor",
-                "power_a_factor",
-                "power_b_factor",
-            ):
+            for key in FACTOR_KEYS:
                 print(f"    {key}: {computed[key]:.10f}")
             print()
         else:
@@ -182,8 +206,9 @@ def main() -> int:
                 print(f"    {key:18s} {value:.10f}")
             print()
 
-    if not args.yaml:
-        print("Re-run with --yaml to get pasteable ESPHome sensor blocks.")
+    if table:
+        print("Re-run with --yaml to get pasteable substitutions for the package,")
+        print("or with --sensors to get complete rn8209d sensor blocks.")
     return 0
 
 
